@@ -10,10 +10,6 @@
 		"^.+\\.(t|j)sx?$": "ts-jest"
 	},
 	"testRegex": "/test/.*\\.test\\.ts$",
-	"testEnvironment": "miniflare",
-	"testEnvironmentOptions": {
-		"scriptPath": "./src/index.ts",
-		"modules": true
-	},
+	"testEnvironment": "node",
 	"collectCoverageFrom": ["src/**/*.{ts,tsx}"]
 }
