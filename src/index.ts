@@ -1,50 +1,218 @@
-addEventListener('fetch', event => {
-	event.respondWith(handleRequest(event.request));
-});
+export interface Env {
+	// Add any environment variables here if needed
+}
 
-async function handleRequest(request: Request): Promise<Response> {
-	const url = new URL(request.url);
-	const pathname = url.pathname;
+interface DosageRequest {
+	targetWeeklyDose: number;
+	testosteroneStrength: number;
+	shotsPerWeek?: number;
+	shotEveryXDays?: number;
+}
 
-	switch (pathname) {
-		case "/calculate-dose":
-			return calculateDose(request);
-		case "/":
-			return serveForm();
-		default:
-			return new Response("Resource not found", { status: 404 });
+interface DosageResponse {
+	dosePerShotMl: string;
+	dosePerShotMg: string;
+	shotsPerWeek: string;
+	frequency: string;
+}
+
+export default {
+	async fetch(
+		request: Request,
+		env: Env,
+		ctx: ExecutionContext,
+	): Promise<Response> {
+		const url = new URL(request.url);
+		const pathname = url.pathname;
+
+		// Add CORS headers for API endpoints
+		const corsHeaders = {
+			"Access-Control-Allow-Origin": "*",
+			"Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+			"Access-Control-Allow-Headers": "Content-Type",
+		};
+
+		// Handle preflight requests
+		if (request.method === "OPTIONS") {
+			return new Response(null, { headers: corsHeaders });
+		}
+
+		switch (pathname) {
+			case "/calculate-dose":
+				return handleCalculateDose(request, corsHeaders);
+			case "/":
+				return serveForm();
+			case "/api/v1/calculate":
+				// New versioned API endpoint supporting both GET and POST
+				return handleApiCalculate(request, corsHeaders);
+			default:
+				return new Response("Resource not found", { status: 404 });
+		}
+	},
+};
+
+async function handleApiCalculate(
+	request: Request,
+	corsHeaders: Record<string, string>,
+): Promise<Response> {
+	try {
+		let params: DosageRequest;
+
+		if (request.method === "POST") {
+			params = (await request.json()) as DosageRequest;
+		} else {
+			const url = new URL(request.url);
+			params = {
+				targetWeeklyDose: parseFloat(
+					url.searchParams.get("targetWeeklyDose") || "0",
+				),
+				testosteroneStrength: parseFloat(
+					url.searchParams.get("testosteroneStrength") || "0",
+				),
+				shotsPerWeek: url.searchParams.get("shotsPerWeek")
+					? parseInt(url.searchParams.get("shotsPerWeek")!, 10)
+					: undefined,
+				shotEveryXDays: url.searchParams.get("shotEveryXDays")
+					? parseFloat(url.searchParams.get("shotEveryXDays")!)
+					: undefined,
+			};
+		}
+
+		const result = calculateDosage(params);
+
+		if ("error" in result) {
+			return new Response(JSON.stringify(result), {
+				status: 400,
+				headers: {
+					"Content-Type": "application/json",
+					...corsHeaders,
+				},
+			});
+		}
+
+		return new Response(JSON.stringify(result), {
+			headers: {
+				"Content-Type": "application/json",
+				...corsHeaders,
+			},
+		});
+	} catch (error) {
+		return new Response(JSON.stringify({ error: "Invalid request format" }), {
+			status: 400,
+			headers: {
+				"Content-Type": "application/json",
+				...corsHeaders,
+			},
+		});
 	}
 }
 
-async function calculateDose(request: Request): Promise<Response> {
+async function handleCalculateDose(
+	request: Request,
+	corsHeaders: Record<string, string>,
+): Promise<Response> {
 	const url = new URL(request.url);
-	const targetWeeklyDose = parseFloat(url.searchParams.get("targetWeeklyDose") || "0");
-	const testosteroneStrength = parseFloat(url.searchParams.get("testosteroneStrength") || "0");
-	const shotsPerWeek = parseInt(url.searchParams.get("shotsPerWeek") || "0", 10);
-	const shotEveryXDays = parseFloat(url.searchParams.get("shotEveryXDays") || "0", 10);
+	const params: DosageRequest = {
+		targetWeeklyDose: parseFloat(
+			url.searchParams.get("targetWeeklyDose") || "0",
+		),
+		testosteroneStrength: parseFloat(
+			url.searchParams.get("testosteroneStrength") || "0",
+		),
+		shotsPerWeek: url.searchParams.get("shotsPerWeek")
+			? parseInt(url.searchParams.get("shotsPerWeek")!, 10)
+			: undefined,
+		shotEveryXDays: url.searchParams.get("shotEveryXDays")
+			? parseFloat(url.searchParams.get("shotEveryXDays")!)
+			: undefined,
+	};
 
-	if (!targetWeeklyDose || !testosteroneStrength || (!shotsPerWeek && !shotEveryXDays)) {
-		return new Response("Missing or invalid parameters", { status: 400 });
+	const result = calculateDosage(params);
+
+	if ("error" in result) {
+		return new Response(JSON.stringify(result), {
+			status: 400,
+			headers: {
+				"Content-Type": "application/json",
+				...corsHeaders,
+			},
+		});
 	}
 
-	let shotsPerWeekCalculated = shotsPerWeek;
-	if (!shotsPerWeek && shotEveryXDays) {
-		shotsPerWeekCalculated = 7 / shotEveryXDays;  // Calculate the equivalent number of shots per week
+	// Return simplified response for backward compatibility
+	return new Response(
+		JSON.stringify({
+			dosePerShotMl: result.dosePerShotMl,
+		}),
+		{
+			headers: {
+				"Content-Type": "application/json",
+				...corsHeaders,
+			},
+		},
+	);
+}
+
+function calculateDosage(
+	params: DosageRequest,
+): DosageResponse | { error: string } {
+	const {
+		targetWeeklyDose,
+		testosteroneStrength,
+		shotsPerWeek,
+		shotEveryXDays,
+	} = params;
+
+	// Input validation
+	if (!targetWeeklyDose || targetWeeklyDose <= 0 || targetWeeklyDose > 1000) {
+		return { error: "Target weekly dose must be between 0 and 1000 mg" };
+	}
+
+	if (
+		!testosteroneStrength ||
+		testosteroneStrength <= 0 ||
+		testosteroneStrength > 500
+	) {
+		return { error: "Testosterone strength must be between 0 and 500 mg/ml" };
+	}
+
+	if (!shotsPerWeek && !shotEveryXDays) {
+		return {
+			error: "Please specify either shots per week or days between shots",
+		};
+	}
+
+	if (shotsPerWeek && shotEveryXDays) {
+		return { error: "Please specify only one frequency option" };
+	}
+
+	let shotsPerWeekCalculated = shotsPerWeek || 0;
+	let frequencyDescription = "";
+
+	if (shotEveryXDays) {
+		if (shotEveryXDays <= 0 || shotEveryXDays > 30) {
+			return { error: "Days between shots must be between 0 and 30" };
+		}
+		shotsPerWeekCalculated = 7 / shotEveryXDays;
+		frequencyDescription = `Every ${shotEveryXDays} days`;
+	} else if (shotsPerWeek) {
+		if (shotsPerWeek <= 0 || shotsPerWeek > 7) {
+			return { error: "Shots per week must be between 0 and 7" };
+		}
+		frequencyDescription =
+			shotsPerWeek === 1 ? "Once weekly" : `${shotsPerWeek} times per week`;
 	}
 
 	const dosePerShotMg = targetWeeklyDose / shotsPerWeekCalculated;
 	const dosePerShotMl = dosePerShotMg / testosteroneStrength;
 
-	return new Response(JSON.stringify({
-		dosePerShotMl: dosePerShotMl.toFixed(3) // Rounding to 3 decimal places
-	}), {
-		headers: {
-			"Content-Type": "application/json"
-		}
-	});
+	return {
+		dosePerShotMl: dosePerShotMl.toFixed(3),
+		dosePerShotMg: dosePerShotMg.toFixed(1),
+		shotsPerWeek: shotsPerWeekCalculated.toFixed(2),
+		frequency: frequencyDescription,
+	};
 }
-
-
 
 function serveForm(): Response {
 	const html = `
@@ -54,6 +222,7 @@ function serveForm(): Response {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TRT Dosage Calculator</title>
+<meta name="description" content="Calculate your testosterone replacement therapy (TRT) injection dosage based on weekly dose, concentration, and injection frequency.">
 <style>
 	:root {
 		--primary-color: #0056b3;
@@ -96,6 +265,17 @@ function serveForm(): Response {
 		margin-bottom: 20px;
 		text-align: center;
 		font-size: 1.8rem;
+	}
+
+	.disclaimer {
+		background-color: #fff3cd;
+		border: 1px solid #ffc107;
+		border-radius: var(--border-radius);
+		padding: 12px;
+		margin-bottom: 20px;
+		font-size: 0.85rem;
+		color: #856404;
+		text-align: center;
 	}
 
 	form {
@@ -171,10 +351,38 @@ function serveForm(): Response {
 		cursor: pointer;
 		transition: background-color 0.3s;
 		margin-top: 10px;
+		position: relative;
 	}
 
-	button:hover {
+	button:hover:not(:disabled) {
 		background-color: var(--primary-dark);
+	}
+
+	button:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+
+	.spinner {
+		display: none;
+		width: 16px;
+		height: 16px;
+		border: 2px solid #ffffff;
+		border-top-color: transparent;
+		border-radius: 50%;
+		animation: spin 0.8s linear infinite;
+		position: absolute;
+		right: 15px;
+		top: 50%;
+		transform: translateY(-50%);
+	}
+
+	@keyframes spin {
+		to { transform: translateY(-50%) rotate(360deg); }
+	}
+
+	button.loading .spinner {
+		display: block;
 	}
 
 	#result {
@@ -185,10 +393,36 @@ function serveForm(): Response {
 		color: var(--text-color);
 		width: 100%;
 		text-align: center;
-		font-size: 1.2rem;
-		font-weight: 600;
+		font-size: 1.1rem;
 		display: none;
 		box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+	}
+
+	#result.show {
+		display: block;
+		animation: slideIn 0.3s ease-out;
+	}
+
+	@keyframes slideIn {
+		from {
+			opacity: 0;
+			transform: translateY(-10px);
+		}
+		to {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+
+	.result-detail {
+		margin: 8px 0;
+		padding: 8px;
+		background-color: var(--background-color);
+		border-radius: 4px;
+	}
+
+	.result-detail strong {
+		color: var(--primary-color);
 	}
 
 	#doseHelp {
@@ -250,6 +484,18 @@ function serveForm(): Response {
 		opacity: 1;
 	}
 
+	.save-preferences {
+		margin-top: 10px;
+		display: flex;
+		align-items: center;
+		font-size: 0.9rem;
+		color: var(--secondary-text);
+	}
+
+	.save-preferences input[type="checkbox"] {
+		margin-right: 8px;
+	}
+
 	@media (max-width: 600px) {
 		body {
 			padding: 10px;
@@ -278,11 +524,16 @@ function serveForm(): Response {
 <body>
 <div class="container">
 	<h1>TRT Dosage Calculator</h1>
+	
+	<div class="disclaimer">
+		<strong>Medical Disclaimer:</strong> This calculator is for informational purposes only. Always consult with your healthcare provider before making any changes to your medication regimen.
+	</div>
+	
 	<form id="dosageForm">
 		<div class="form-group">
 			<label for="targetWeeklyDose">Target Weekly Dose (mg)</label>
-			<input type="number" id="targetWeeklyDose" name="targetWeeklyDose" value="100" min="0" required>
-			<div id="targetWeeklyDoseError" class="error-message">Please enter a valid weekly dose</div>
+			<input type="number" id="targetWeeklyDose" name="targetWeeklyDose" value="100" min="0" max="1000" required>
+			<div id="targetWeeklyDoseError" class="error-message">Please enter a valid weekly dose (0-1000 mg)</div>
 		</div>
 		
 		<div class="form-group">
@@ -293,36 +544,76 @@ function serveForm(): Response {
 					<span class="tooltip-text">Check your medication label for concentration (typically 100, 200, or 250 mg/ml)</span>
 				</span>
 			</label>
-			<input type="number" id="testosteroneStrength" name="testosteroneStrength" value="200" min="0" required>
-			<div id="testosteroneStrengthError" class="error-message">Please enter a valid strength</div>
+			<input type="number" id="testosteroneStrength" name="testosteroneStrength" value="200" min="0" max="500" required>
+			<div id="testosteroneStrengthError" class="error-message">Please enter a valid strength (0-500 mg/ml)</div>
 		</div>
 		
 		<div class="divider">Choose one option below</div>
 		
 		<div class="form-group">
 			<label for="shotsPerWeek">Number of Shots per Week</label>
-			<input type="number" id="shotsPerWeek" name="shotsPerWeek" placeholder="e.g., 2">
-			<div id="shotsPerWeekError" class="error-message">Please enter a valid number</div>
+			<input type="number" id="shotsPerWeek" name="shotsPerWeek" placeholder="e.g., 2" min="0" max="7">
+			<div id="shotsPerWeekError" class="error-message">Please enter a valid number (1-7)</div>
 		</div>
 		
 		<div class="form-group">
 			<label for="shotEveryXDays">OR Shot Every X Days</label>
-			<input type="number" id="shotEveryXDays" name="shotEveryXDays" step="0.1" placeholder="e.g., 3.5">
-			<div id="shotEveryXDaysError" class="error-message">Please enter a valid number of days</div>
+			<input type="number" id="shotEveryXDays" name="shotEveryXDays" step="0.1" placeholder="e.g., 3.5" min="0" max="30">
+			<div id="shotEveryXDaysError" class="error-message">Please enter a valid number of days (1-30)</div>
 		</div>
 		
-		<button type="button" onclick="calculateDose()">Calculate Dose</button>
+		<div class="save-preferences">
+			<input type="checkbox" id="savePreferences" checked>
+			<label for="savePreferences">Remember my settings</label>
+		</div>
+		
+		<button type="button" onclick="calculateDose()" id="calculateBtn">
+			Calculate Dose
+			<span class="spinner"></span>
+		</button>
 	</form>
 	
 	<div id="result"></div>
 	
 	<div id="doseHelp">
-		1 ml = 1 cc. Using a 1 cc insulin syringe makes measuring fractions of ml easier. 
-		The syringe should have markings for each 0.1 ml/cc.
+		<strong>Measurement Guide:</strong> 1 ml = 1 cc. Using a 1 cc insulin syringe makes measuring easier. 
+		The syringe should have markings for each 0.1 ml/cc increment.
 	</div>
 </div>
 
 <script>
+// Load saved preferences on page load
+window.addEventListener('DOMContentLoaded', () => {
+	const savedPrefs = localStorage.getItem('trtCalculatorPrefs');
+	if (savedPrefs) {
+		try {
+			const prefs = JSON.parse(savedPrefs);
+			if (prefs.targetWeeklyDose) document.getElementById('targetWeeklyDose').value = prefs.targetWeeklyDose;
+			if (prefs.testosteroneStrength) document.getElementById('testosteroneStrength').value = prefs.testosteroneStrength;
+			if (prefs.shotsPerWeek) document.getElementById('shotsPerWeek').value = prefs.shotsPerWeek;
+			if (prefs.shotEveryXDays) document.getElementById('shotEveryXDays').value = prefs.shotEveryXDays;
+		} catch (e) {
+			console.error('Error loading preferences:', e);
+		}
+	}
+});
+
+function savePreferences() {
+	if (!document.getElementById('savePreferences').checked) {
+		localStorage.removeItem('trtCalculatorPrefs');
+		return;
+	}
+	
+	const prefs = {
+		targetWeeklyDose: document.getElementById('targetWeeklyDose').value,
+		testosteroneStrength: document.getElementById('testosteroneStrength').value,
+		shotsPerWeek: document.getElementById('shotsPerWeek').value,
+		shotEveryXDays: document.getElementById('shotEveryXDays').value,
+	};
+	
+	localStorage.setItem('trtCalculatorPrefs', JSON.stringify(prefs));
+}
+
 function validateForm() {
 	let isValid = true;
 	const targetWeeklyDose = parseFloat(document.getElementById('targetWeeklyDose').value);
@@ -334,13 +625,13 @@ function validateForm() {
 	document.querySelectorAll('.error-message').forEach(el => el.style.display = 'none');
 	
 	// Validate target weekly dose
-	if (isNaN(targetWeeklyDose) || targetWeeklyDose <= 0) {
+	if (isNaN(targetWeeklyDose) || targetWeeklyDose <= 0 || targetWeeklyDose > 1000) {
 		document.getElementById('targetWeeklyDoseError').style.display = 'block';
 		isValid = false;
 	}
 	
 	// Validate testosterone strength
-	if (isNaN(testosteroneStrength) || testosteroneStrength <= 0) {
+	if (isNaN(testosteroneStrength) || testosteroneStrength <= 0 || testosteroneStrength > 500) {
 		document.getElementById('testosteroneStrengthError').style.display = 'block';
 		isValid = false;
 	}
@@ -348,67 +639,117 @@ function validateForm() {
 	// Validate that either shotsPerWeek or shotEveryXDays is filled
 	if ((!shotsPerWeek && !shotEveryXDays) || 
 		(shotsPerWeek && shotEveryXDays)) {
+		document.getElementById('shotsPerWeekError').textContent = 'Please choose one frequency option';
 		document.getElementById('shotsPerWeekError').style.display = 'block';
+		document.getElementById('shotEveryXDaysError').textContent = 'Please choose one frequency option';
 		document.getElementById('shotEveryXDaysError').style.display = 'block';
 		isValid = false;
-	} else if (shotsPerWeek && (isNaN(parseFloat(shotsPerWeek)) || parseFloat(shotsPerWeek) <= 0)) {
-		document.getElementById('shotsPerWeekError').style.display = 'block';
-		isValid = false;
-	} else if (shotEveryXDays && (isNaN(parseFloat(shotEveryXDays)) || parseFloat(shotEveryXDays) <= 0)) {
-		document.getElementById('shotEveryXDaysError').style.display = 'block';
-		isValid = false;
+	} else if (shotsPerWeek) {
+		const val = parseFloat(shotsPerWeek);
+		if (isNaN(val) || val <= 0 || val > 7) {
+			document.getElementById('shotsPerWeekError').style.display = 'block';
+			isValid = false;
+		}
+	} else if (shotEveryXDays) {
+		const val = parseFloat(shotEveryXDays);
+		if (isNaN(val) || val <= 0 || val > 30) {
+			document.getElementById('shotEveryXDaysError').style.display = 'block';
+			isValid = false;
+		}
 	}
 	
 	return isValid;
 }
 
-function calculateDose() {
+async function calculateDose() {
 	if (!validateForm()) {
 		return;
 	}
+	
+	const btn = document.getElementById('calculateBtn');
+	const resultEl = document.getElementById('result');
+	
+	// Show loading state
+	btn.classList.add('loading');
+	btn.disabled = true;
+	resultEl.classList.remove('show');
+	
+	// Save preferences if checkbox is checked
+	savePreferences();
 	
 	const targetWeeklyDose = document.getElementById('targetWeeklyDose').value;
 	const testosteroneStrength = document.getElementById('testosteroneStrength').value;
 	const shotsPerWeek = document.getElementById('shotsPerWeek').value;
 	const shotEveryXDays = document.getElementById('shotEveryXDays').value;
 	
-	let query = \`targetWeeklyDose=\${targetWeeklyDose}&testosteroneStrength=\${testosteroneStrength}\`;
-	if (shotsPerWeek) {
-		query += \`&shotsPerWeek=\${shotsPerWeek}\`;
-	} else if (shotEveryXDays) {
-		query += \`&shotEveryXDays=\${shotEveryXDays}\`;
-	}
+	const params = {
+		targetWeeklyDose,
+		testosteroneStrength,
+		...(shotsPerWeek && { shotsPerWeek }),
+		...(shotEveryXDays && { shotEveryXDays }),
+	};
 	
-	const resultEl = document.getElementById('result');
-	resultEl.style.display = 'block';
-	resultEl.innerText = 'Calculating...';
-	
-	fetch(\`/calculate-dose?\${query}\`)
-		.then(response => {
-			if (!response.ok) {
-				throw new Error('Network response was not ok');
-			}
-			return response.json();
-		})
-		.then(data => {
-			resultEl.innerHTML = '<strong>Dose per Shot:</strong> ' + data.dosePerShotMl + ' ml';
-		})
-		.catch(error => {
-			console.error('Error:', error);
-			resultEl.innerText = 'Error calculating dosage. Please try again.';
+	try {
+		// Use the new API endpoint
+		const response = await fetch('/api/v1/calculate', {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify(params),
 		});
+		
+		const data = await response.json();
+		
+		if (!response.ok) {
+			throw new Error(data.error || 'Calculation failed');
+		}
+		
+		// Display detailed results
+		resultEl.innerHTML = \`
+			<h3 style="margin-bottom: 12px; color: var(--primary-color);">Your Dosage</h3>
+			<div class="result-detail">
+				<strong>Volume per injection:</strong> \${data.dosePerShotMl} ml
+			</div>
+			<div class="result-detail">
+				<strong>Amount per injection:</strong> \${data.dosePerShotMg} mg
+			</div>
+			<div class="result-detail">
+				<strong>Injection frequency:</strong> \${data.frequency}
+			</div>
+		\`;
+		
+		resultEl.classList.add('show');
+	} catch (error) {
+		console.error('Error:', error);
+		resultEl.innerHTML = \`<span style="color: #d32f2f;">Error: \${error.message}</span>\`;
+		resultEl.classList.add('show');
+	} finally {
+		btn.classList.remove('loading');
+		btn.disabled = false;
+	}
 }
 
 // Clear one field when the other is used
 document.getElementById('shotsPerWeek').addEventListener('input', function() {
 	if (this.value) {
 		document.getElementById('shotEveryXDays').value = '';
+		document.getElementById('shotEveryXDaysError').style.display = 'none';
 	}
 });
 
 document.getElementById('shotEveryXDays').addEventListener('input', function() {
 	if (this.value) {
 		document.getElementById('shotsPerWeek').value = '';
+		document.getElementById('shotsPerWeekError').style.display = 'none';
+	}
+});
+
+// Add keyboard support
+document.getElementById('dosageForm').addEventListener('keypress', function(e) {
+	if (e.key === 'Enter') {
+		e.preventDefault();
+		calculateDose();
 	}
 });
 </script>
@@ -417,7 +758,9 @@ document.getElementById('shotEveryXDays').addEventListener('input', function() {
 	`;
 	return new Response(html, {
 		headers: {
-			"Content-Type": "text/html"
-		}
+			"Content-Type": "text/html",
+			"Content-Security-Policy":
+				"default-src 'self' 'unsafe-inline'; script-src 'unsafe-inline'; style-src 'unsafe-inline';",
+		},
 	});
 }

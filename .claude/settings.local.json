@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)",
+      "Bash(npm install)",
+      "Bash(git checkout:*)",
+      "Bash(npm audit:*)",
+      "Bash(rm:*)",
+      "Bash(npm run lint)",
+      "Bash(npm run format:*)",
+      "Bash(git add:*)"
+    ]
+  },
+  "enableAllProjectMcpServers": false
+}
