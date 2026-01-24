@@ -14,6 +14,21 @@ export default [
 				ecmaVersion: "latest",
 				sourceType: "module",
 			},
+			globals: {
+				// Cloudflare Workers globals
+				Request: "readonly",
+				Response: "readonly",
+				URL: "readonly",
+				ExecutionContext: "readonly",
+				fetch: "readonly",
+				Headers: "readonly",
+				FormData: "readonly",
+				Blob: "readonly",
+				File: "readonly",
+				crypto: "readonly",
+				caches: "readonly",
+				console: "readonly",
+			},
 		},
 		plugins: {
 			"@typescript-eslint": typescript,
@@ -24,6 +39,10 @@ export default [
 			"@typescript-eslint/no-unused-vars": [
 				"error",
 				{ argsIgnorePattern: "^_" },
+			],
+			"@typescript-eslint/no-empty-object-type": [
+				"error",
+				{ allowInterfaces: "with-single-extends" },
 			],
 		},
 	},

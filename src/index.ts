@@ -1,3 +1,4 @@
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 export interface Env {
 	// Add any environment variables here if needed
 }
@@ -19,8 +20,8 @@ interface DosageResponse {
 export default {
 	async fetch(
 		request: Request,
-		env: Env,
-		ctx: ExecutionContext,
+		_env: Env,
+		_ctx: ExecutionContext,
 	): Promise<Response> {
 		const url = new URL(request.url);
 		const pathname = url.pathname;
@@ -96,7 +97,7 @@ async function handleApiCalculate(
 				...corsHeaders,
 			},
 		});
-	} catch (error) {
+	} catch {
 		return new Response(JSON.stringify({ error: "Invalid request format" }), {
 			status: 400,
 			headers: {
